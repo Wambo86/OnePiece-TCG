@@ -14,6 +14,7 @@ Besitz und Decks werden nur auf dem Gerät gespeichert (unter „Besitz → Sich
 `scripts/build-data.mjs` erzeugt `data/cards.json` (Karten und Bild-Adressen von optcgapi.com) und
 `data/prices.json` (öffentliche tägliche Preisdatei von Cardmarket). Der Workflow
 `.github/workflows/pages.yml` führt das täglich aus und veröffentlicht die App auf GitHub Pages.
+Die erzeugten Dateien unter `data/` werden nicht ins Repository eingecheckt.
 
 ```bash
 node scripts/build-data.mjs

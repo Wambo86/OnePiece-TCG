@@ -28,7 +28,8 @@ jobs:
         with:
           node-version: 22
       - name: Karten und Cardmarket-Preise holen
-        run: node scripts/build-data.mjs || echo "::warning::Daten konnten nicht vollständig aktualisiert werden – der gespeicherte Stand wird veröffentlicht."
+        # Die Daten liegen nicht im Repository. Schlägt der Abruf fehl, bricht der Lauf ab und die zuletzt veröffentlichte Seite bleibt online.
+        run: node scripts/build-data.mjs
       - name: Seite zusammenstellen
         run: |
           mkdir _site
