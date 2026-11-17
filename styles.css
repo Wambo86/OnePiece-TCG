@@ -242,3 +242,15 @@ details.box .body { padding: 0 0 12px; display: flex; flex-direction: column; ga
 
 @media (min-width: 560px) { .grid { grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); } }
 @media (prefers-reduced-motion: no-preference) { .tile .art { transition: transform .12s; } .tile:active .art { transform: scale(.97); } }
+
+/* Preis-Alarm */
+.alarm { background: color-mix(in srgb, var(--straw) 14%, var(--surface)); border: 1px solid color-mix(in srgb, var(--straw) 45%, var(--line)); border-radius: 14px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.alarm-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.alarm-head b { font-size: 1.02rem; }
+.alarm-row { display: flex; align-items: center; gap: 10px; padding: 6px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line); }
+.alarm-row .open { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; border: 0; background: none; padding: 0; text-align: left; }
+.alarm-row .art { width: 34px; flex: none; aspect-ratio: 63/88; border-radius: 3px; overflow: hidden; background: var(--surface-2); position: relative; }
+.alarm-row .nm { min-width: 0; }
+.alarm-row .nm > b { display: block; font-size: .92rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.alarm-row .nm span { font-size: .78rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.alarm-row .nm .up { color: var(--ok); }

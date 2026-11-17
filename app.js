@@ -33,11 +33,11 @@ async function loadData() {
 
 /* ---------- Speicher ---------- */
 const STORE_KEY = 'optcg.logbuch.v1';
-let store = { own: {}, decks: [], pick: {} };
+let store = { own: {}, decks: [], pick: {}, base: {}, notify: false, notifiedFor: '' };
 function loadStore() {
   try {
     const raw = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
-    if (raw && typeof raw === 'object') store = { own: raw.own || {}, decks: Array.isArray(raw.decks) ? raw.decks : [], pick: raw.pick || {} };
+    if (raw && typeof raw === 'object') store = { own: raw.own || {}, decks: Array.isArray(raw.decks) ? raw.decks : [], pick: raw.pick || {}, base: raw.base || {}, notify: !!raw.notify, notifiedFor: raw.notifiedFor || '' };
   } catch { /* leerer Start */ }
 }
 function saveStore() {
@@ -51,6 +51,9 @@ function setOwned(k, n) {
   for (const d of store.decks) {
     if (d.cards[k] > n) { if (n <= 0) delete d.cards[k]; else d.cards[k] = n; }
   }
+  // Merkpreis für den Preis-Alarm: beim ersten Exemplar festhalten, beim letzten löschen
+  if (n <= 0) delete store.base[k];
+  else if (!store.base[k]) { const v = valueOf(DB.byKey.get(k)); if (v > 0) store.base[k] = { p: v, t: DB.updated || new Date().toISOString() }; }
   saveStore();
 }
 
@@ -65,6 +68,79 @@ function priceOf(card) {
 const valueOf = (card) => priceOf(card)?.value ?? 0;
 const cmSearch = (num) => `https://www.cardmarket.com/de/OnePiece/Products/Search?searchString=${encodeURIComponent(num)}`;
 const cmProduct = (id) => `https://www.cardmarket.com/de/OnePiece/Products?idProduct=${id}`;
+
+/* ---------- Preis-Alarm ---------- */
+// Meldet Karten im Besitz, deren Cardmarket-Wert seit dem gemerkten Preis mindestens so stark gestiegen ist.
+const ALERT_FACTOR = 2;
+function ensureBaselines() {
+  // Für jede besessene Karte einen Merkpreis anlegen, falls noch keiner da ist (z. B. nach dem Update).
+  let changed = false;
+  for (const k of Object.keys(store.own)) {
+    if (store.base[k]) continue;
+    const card = DB.byKey.get(k); if (!card) continue;
+    const v = valueOf(card);
+    if (v > 0) { store.base[k] = { p: v, t: DB.updated || new Date().toISOString() }; changed = true; }
+  }
+  if (changed) saveStore();
+}
+function priceAlerts() {
+  const out = [];
+  for (const k of Object.keys(store.own)) {
+    const card = DB.byKey.get(k), b = store.base[k];
+    if (!card || !b || !b.p) continue;
+    const v = valueOf(card);
+    if (v >= b.p * ALERT_FACTOR) out.push({ card, from: b.p, to: v, since: b.t });
+  }
+  return out.sort((a, b) => b.to / b.from - a.to / a.from);
+}
+// „Erledigt": Merkpreis auf den aktuellen Wert setzen, damit die Karte erst bei erneuter Verdopplung wieder meldet.
+function ackAlerts(keys) {
+  for (const k of keys) { const card = DB.byKey.get(k); if (card) store.base[k] = { p: valueOf(card), t: DB.updated || new Date().toISOString() }; }
+  saveStore();
+}
+async function enableNotifications() {
+  if (!('Notification' in window)) { toast('Dieses Gerät zeigt hier keine Benachrichtigungen an.'); return; }
+  let perm = Notification.permission;
+  if (perm !== 'granted') { try { perm = await Notification.requestPermission(); } catch { perm = 'denied'; } }
+  store.notify = perm === 'granted';
+  saveStore();
+  toast(store.notify ? 'Preis-Alarm aktiv. Tipp: die App am Home-Bildschirm installieren, damit Meldungen zuverlässig kommen.' : 'Benachrichtigungen wurden nicht erlaubt.');
+  if (store.notify) maybeNotify(true);
+  rerender();
+}
+// Zeigt eine Gerätemeldung, sobald sich beim aktuellen Datenstand etwas verdoppelt hat – höchstens einmal pro Preis-Stand.
+function maybeNotify(force) {
+  if (!store.notify || !('Notification' in window) || Notification.permission !== 'granted') return;
+  const alerts = priceAlerts();
+  if (!alerts.length) { return; }
+  if (!force && store.notifiedFor === PR.updated) return;
+  store.notifiedFor = PR.updated; saveStore();
+  const top = alerts[0];
+  const body = alerts.length === 1
+    ? `${top.card.name} (${top.card.n}): ${eur(top.from)} → ${eur(top.to)}`
+    : `${alerts.length} Karten haben sich mindestens verdoppelt, u. a. ${top.card.name}.`;
+  const opts = { body, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', tag: 'preis-alarm' };
+  try {
+    if (navigator.serviceWorker) navigator.serviceWorker.getRegistration().then((reg) => {
+      if (reg && reg.showNotification) reg.showNotification('Preis-Alarm', opts);
+      else new Notification('Preis-Alarm', opts);
+    }).catch(() => { try { new Notification('Preis-Alarm', opts); } catch { /* ignorieren */ } });
+    else new Notification('Preis-Alarm', opts);
+  } catch { /* ignorieren */ }
+}
+function alertBanner() {
+  const alerts = priceAlerts();
+  if (!alerts.length) return '';
+  return `<div class="alarm">
+    <div class="alarm-head"><b>Preis-Alarm</b><button class="btn small" data-act="alert-ack-all">Alle erledigt</button></div>
+    <p class="hint">Mindestens ${ALERT_FACTOR}× so teuer wie bei deinem gemerkten Preis:</p>
+    ${alerts.map((a) => `<div class="alarm-row">
+      <button class="open" data-act="open" data-k="${esc(a.card.k)}">${art(a.card)}
+        <span class="nm"><b>${esc(a.card.name)}</b><span>${esc(a.card.n)} · ${eur(a.from)} → <b class="up">${eur(a.to)}</b> (×${(a.to / a.from).toFixed(1)})</span></span></button>
+      <button class="btn small" data-act="alert-ack" data-k="${esc(a.card.k)}">Erledigt</button>
+    </div>`).join('')}
+  </div>`;
+}
 
 /* ---------- Bausteine ---------- */
 function art(card, eager) {
@@ -129,6 +205,7 @@ const rerender = () => { const y = window.scrollY; route(); window.scrollTo(0, y
 /* ---------- Besitz ---------- */
 function viewBesitz() {
   $('#title').textContent = 'Besitz';
+  $('#top-actions').innerHTML = ('Notification' in window) ? `<button class="btn small" data-act="notify-enable">${store.notify ? 'Alarm an' : 'Alarm aus'}</button>` : '';
   const all = Object.keys(store.own).map((k) => DB.byKey.get(k)).filter(Boolean);
   if (!all.length) {
     view.innerHTML = `<div class="empty"><strong>Noch keine Karten im Besitz</strong>Scanne deine erste Karte oder suche sie unter „Alle Karten“.<br><a class="btn primary" href="#scan">Karte scannen</a></div>${backupBox()}`;
@@ -138,6 +215,7 @@ function viewBesitz() {
   const worth = all.reduce((s, c) => s + owned(c.k) * valueOf(c), 0);
   const s = ui.besitz;
   view.innerHTML = `
+    ${alertBanner()}
     <div class="stats">
       <div class="stat"><b>${total}</b><span>Karten</span></div>
       <div class="stat"><b>${all.length}</b><span>verschiedene</span></div>
@@ -169,6 +247,7 @@ function backupBox() {
     <div class="row"><button class="btn small" data-act="export">Sicherung speichern</button>
     <label class="btn small">Sicherung laden<input type="file" id="import-file" accept="application/json,.json" hidden></label></div>
     <p class="hint">${DB.cards.length.toLocaleString('de-DE')} Kartenmotive · Cardmarket-Preise vom ${prDate} (Preistrend, wird täglich aktualisiert).</p>
+    <p class="hint">Preis-Alarm: Sobald eine Karte im Besitz mindestens doppelt so teuer ist wie beim ersten Hinzufügen, erscheint sie oben in „Besitz“. Mit „Alarm an“ bekommst du zusätzlich eine Gerätemeldung – dafür muss die App am Home-Bildschirm installiert und eine Weile geöffnet worden sein; bei geschlossener App sind Meldungen auf dem iPhone nicht garantiert.</p>
   </div></details>`;
 }
 function exportBackup() {
@@ -183,7 +262,7 @@ async function importBackup(file) {
   try {
     const data = JSON.parse(await file.text());
     if (!data || typeof data.own !== 'object') throw new Error();
-    store = { own: data.own || {}, decks: Array.isArray(data.decks) ? data.decks : [], pick: data.pick || {} };
+    store = { own: data.own || {}, decks: Array.isArray(data.decks) ? data.decks : [], pick: data.pick || {}, base: data.base || {}, notify: !!data.notify, notifiedFor: data.notifiedFor || '' };
     saveStore(); toast('Sicherung geladen.'); rerender();
   } catch { toast('Diese Datei ist keine gültige Sicherung.'); }
 }
@@ -623,6 +702,9 @@ document.addEventListener('click', (e) => {
     case 'own-inc': setOwned(sheetKey, owned(sheetKey) + 1); openCard(sheetKey); break;
     case 'own-dec': setOwned(sheetKey, owned(sheetKey) - 1); openCard(sheetKey); break;
     case 'export': exportBackup(); break;
+    case 'notify-enable': enableNotifications(); break;
+    case 'alert-ack': ackAlerts([k]); rerender(); break;
+    case 'alert-ack-all': ackAlerts(priceAlerts().map((a) => a.card.k)); rerender(); break;
     case 'deck-new': newDeck(); break;
     case 'deck-add': openPicker(id); break;
     case 'deck-inc': if (deckChange(id, k, 1)) rerender(); break;
@@ -653,6 +735,8 @@ window.addEventListener('hashchange', route);
   loadStore();
   try { await loadData(); }
   catch { view.innerHTML = '<p class="empty"><strong>Kartendatenbank nicht erreichbar</strong>Prüfe die Internetverbindung und lade die Seite neu.</p>'; return; }
+  ensureBaselines();
   route();
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+  maybeNotify(false);
 })();
