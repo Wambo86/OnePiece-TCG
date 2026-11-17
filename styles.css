@@ -286,3 +286,37 @@ details.box .body { padding: 0 0 12px; display: flex; flex-direction: column; ga
 .fastlog-row .nm { min-width: 0; }
 .fastlog-row .nm > b { display: block; font-size: .9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fastlog-row .nm span { font-size: .76rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* Übungs-Modus / Spielbrett */
+.board { display: flex; flex-direction: column; gap: 10px; }
+.side { display: flex; flex-direction: column; gap: 6px; }
+.side.cpu { padding-bottom: 8px; border-bottom: 1px dashed var(--line); }
+.pinfo { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: .82rem; }
+.pinfo b { font-size: .95rem; }
+.pinfo .life { color: var(--accent); font-weight: 800; }
+.pinfo .chip { background: var(--surface-2); border-radius: 999px; padding: 1px 8px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.units { display: flex; gap: 6px; flex-wrap: wrap; min-height: 72px; }
+.gunit { position: relative; width: 52px; flex: none; padding: 0; border: 0; background: none; border-radius: 5px; }
+.gunit .art { aspect-ratio: 63/88; border-radius: 5px; overflow: hidden; background: var(--surface-2); box-shadow: var(--shadow); }
+.gunit.rested .art { transform: rotate(90deg) scale(.82); filter: brightness(.7); }
+.gunit.sel .art { outline: 3px solid var(--accent); outline-offset: 1px; }
+.gunit.targetable .art { outline: 3px solid var(--ok); outline-offset: 1px; }
+.gunit .gpow { position: absolute; bottom: 0; left: 0; right: 0; background: rgb(0 0 0 / .7); color: #fff; font-size: .62rem; font-weight: 800; text-align: center; font-variant-numeric: tabular-nums; }
+.gunit .gdon { position: absolute; top: -5px; right: -5px; background: var(--straw); color: #000; font-size: .6rem; font-weight: 800; border-radius: 8px; padding: 0 4px; border: 1px solid var(--bg); }
+.gunit .gkw { position: absolute; top: -5px; left: -5px; background: var(--c-Blue); color: #fff; font-size: .58rem; font-weight: 800; width: 15px; height: 15px; border-radius: 50%; display: grid; place-items: center; border: 1px solid var(--bg); }
+
+.center { display: flex; flex-direction: column; gap: 8px; align-items: stretch; padding: 8px 0; }
+.center .phase { text-align: center; font-weight: 800; font-size: 1.05rem; }
+.glog { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; font-size: .8rem; color: var(--muted); max-height: 108px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.gactions { justify-content: center; }
+
+.hand { display: flex; gap: 6px; overflow-x: auto; padding: 4px 0 6px; }
+.ghand { position: relative; width: 64px; flex: none; padding: 0; border: 0; background: none; text-align: left; }
+.ghand .art { aspect-ratio: 63/88; border-radius: 5px; overflow: hidden; background: var(--surface-2); box-shadow: var(--shadow); }
+.ghand.dim { opacity: .5; }
+.ghand .gcost { position: absolute; top: -5px; left: -5px; background: var(--c-Purple); color: #fff; font-size: .66rem; font-weight: 800; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; border: 1px solid var(--bg); }
+.ghand .gctr { position: absolute; top: -5px; right: -5px; background: var(--ok); color: #fff; font-size: .58rem; font-weight: 800; border-radius: 8px; padding: 0 4px; border: 1px solid var(--bg); }
+.ghand .gname { display: block; font-size: .62rem; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+
+.defense { position: fixed; inset: 0; z-index: 30; display: grid; place-items: end center; background: rgb(0 0 0 / .5); padding: 0 16px calc(env(safe-area-inset-bottom,0px) + 16px); }
+.dbox { background: var(--bg); border: 1px solid var(--line); border-radius: 16px; padding: 14px; width: 100%; max-width: 480px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 6px; }

@@ -223,12 +223,13 @@ function route() {
   const hash = location.hash.replace('#', '') || (Object.keys(store.own).length ? 'besitz' : 'scan');
   const [name, arg] = hash.startsWith('deck-') ? ['deck', hash.slice(5)] : [hash, null];
   if (name !== 'scan') Scanner.stop();
+  if (name !== 'spielen') Game.match = null;
   document.querySelectorAll('.tabs a').forEach((a) => {
     const on = a.dataset.tab === name || (name === 'deck' && a.dataset.tab === 'decks');
     if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   });
   $('#top-actions').innerHTML = '';
-  ({ scan: viewScan, besitz: viewBesitz, decks: viewDecks, deck: viewDeck, alle: viewAlle, serien: viewSerien, wunsch: viewWunsch }[name] || viewBesitz)(arg);
+  ({ scan: viewScan, besitz: viewBesitz, decks: viewDecks, deck: viewDeck, alle: viewAlle, serien: viewSerien, wunsch: viewWunsch, spielen: viewPlay }[name] || viewBesitz)(arg);
   window.scrollTo(0, 0);
 }
 const rerender = () => { const y = window.scrollY; route(); window.scrollTo(0, y); };
@@ -488,6 +489,7 @@ function viewDeck(id) {
   view.innerHTML = `
     <div class="row"><input class="field grow" id="deck-name" value="${esc(deck.name)}" aria-label="Deckname" maxlength="40">
       <button class="btn primary" data-act="deck-add" data-id="${esc(id)}">Karten hinzufügen</button></div>
+    <button class="btn" data-act="deck-play" data-id="${esc(id)}" style="width:100%">Gegen Computer üben ▶</button>
     <div class="stats">
       <div class="stat"><b>${i.mainCount} / 50</b><span>Karten</span></div>
       <div class="stat"><b>${i.leader ? esc(i.leader.col.map((c) => COLOR_DE[c]).join('/')) : '–'}</b><span>Leader-Farbe</span></div>
@@ -830,6 +832,7 @@ let delArmed = null;
 document.addEventListener('click', (e) => {
   const el = e.target.closest('[data-act]');
   if (!el) return;
+  if (gameClick(el)) return;
   const { act, k, id } = el.dataset;
   if (act !== 'deck-del') delArmed = null;
   switch (act) {
@@ -869,6 +872,218 @@ document.addEventListener('change', (e) => { if (e.target.id === 'import-file' &
 for (const dlg of [sheet, picker]) dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); });
 document.addEventListener('visibilitychange', () => { if (document.hidden) Scanner.stop(); });
 window.addEventListener('hashchange', route);
+
+/* ---------- Übungs-Modus (Oberfläche) ---------- */
+const Game = {
+  match: null,
+  cfg: { deckId: null, difficulty: 'mittel', cpu: 0 },
+  attachMode: false,
+  selAttacker: null,
+  def: { blocker: null, counters: [] },
+};
+
+function deckLeader(deck) {
+  for (const k of Object.keys(deck.cards)) { const c = DB.byKey.get(k); if (c && c.t === 'Leader') return c; }
+  return null;
+}
+function deckCheck(deck) {
+  const leader = deckLeader(deck);
+  const main = Object.entries(deck.cards).reduce((s, [k, n]) => s + (DB.byKey.get(k) && DB.byKey.get(k).t !== 'Leader' ? n : 0), 0);
+  return { leader, main, ok: !!leader && main === 50 };
+}
+
+function viewPlay() {
+  $('#title').textContent = 'Üben';
+  $('#top-actions').innerHTML = '<a class="btn small" href="#decks">Decks</a>';
+  if (!Game.match) { renderSetup(); return; }
+  renderBoard();
+}
+
+function renderSetup() {
+  const decks = store.decks.map((d) => ({ d, c: deckCheck(d) }));
+  const cfg = Game.cfg;
+  if (!cfg.deckId && decks.length) cfg.deckId = decks[0].d.id;
+  const cpuList = (window.OPGame ? OPGame.cpuDecks(DB) : []);
+  view.innerHTML = `
+    <p class="hint">Übe mit deinem eigenen Deck gegen den Computer. Es gelten die Kernregeln; Schlüsselwort-Effekte (Blocker, Rush, Konter, DON!!) wirken, besondere Karteneffekte kommen nach und nach dazu.</p>
+    ${decks.length ? `
+    <label class="section-title">Dein Deck</label>
+    <select class="field" id="g-deck">${decks.map(({ d, c }) => `<option value="${esc(d.id)}" ${d.id === cfg.deckId ? 'selected' : ''}>${esc(d.name)} ${c.ok ? '✓' : `(${c.main}/50${c.leader ? '' : ', kein Leader'})`}</option>`).join('')}</select>
+    <label class="section-title">Gegner</label>
+    <select class="field" id="g-cpu">${cpuList.map((d, i) => `<option value="${i}" ${i === cfg.cpu ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select>
+    <label class="section-title">Schwierigkeit</label>
+    <div class="row" id="g-diff">${['leicht', 'mittel', 'schwer'].map((x) => `<button class="btn small ${cfg.difficulty === x ? 'primary' : ''}" data-act="g-diff" data-v="${x}">${x}</button>`).join('')}</div>
+    <div id="g-deckwarn"></div>
+    <button class="btn primary" data-act="g-start" style="width:100%;margin-top:6px">Spiel starten ▶</button>
+    ` : `<div class="empty"><strong>Noch kein Deck</strong>Baue zuerst ein Deck, dann kannst du damit üben.<br><a class="btn primary" href="#decks">Zu den Decks</a></div>`}`;
+  const warn = $('#g-deckwarn');
+  const upd = () => {
+    const d = store.decks.find((x) => x.id === cfg.deckId);
+    const c = d ? deckCheck(d) : null;
+    warn.innerHTML = c && !c.ok ? `<p class="hint" style="color:var(--warn)">Dieses Deck ist noch nicht vollständig (${c.main}/50${c.leader ? '' : ', Leader fehlt'}). Du kannst trotzdem üben, aber ein echtes Deck hat 1 Leader und 50 Karten.</p>` : '';
+  };
+  upd();
+  if ($('#g-deck')) $('#g-deck').onchange = (e) => { cfg.deckId = e.target.value; upd(); };
+  if ($('#g-cpu')) $('#g-cpu').onchange = (e) => { cfg.cpu = +e.target.value; };
+}
+
+function startMatch() {
+  const deck = store.decks.find((d) => d.id === Game.cfg.deckId);
+  if (!deck || !window.OPGame) { toast('Kein Deck gewählt.'); return; }
+  const leader = deckLeader(deck);
+  if (!leader) { toast('Dein Deck hat keinen Leader.'); return; }
+  const playerDeck = { name: deck.name, leader, cards: deck.cards, lookup: (k) => DB.byKey.get(k) };
+  const cpuDeck = OPGame.cpuDecks(DB)[Game.cfg.cpu] || OPGame.cpuDecks(DB)[0];
+  Game.selAttacker = null; Game.attachMode = false; Game.def = { blocker: null, counters: [] };
+  Game.match = OPGame.createMatch({ playerDeck, cpuDeck, difficulty: Game.cfg.difficulty, delay: 500, onUpdate: () => { if (location.hash.replace('#', '') === 'spielen') renderBoard(); } });
+  Game.match.start();
+  renderBoard();
+}
+
+// Mini-Karte auf dem Spielfeld
+function gUnit(p, c, side, { sel = false, targetable = false } = {}) {
+  const pw = Game.match.power(p, c);
+  const act = targetable ? 'g-target' : (side === 'me' ? 'g-unit' : '');
+  const tgt = c === p.leader ? 'leader' : c.uid;
+  return `<button class="gunit${c.rested ? ' rested' : ''}${sel ? ' sel' : ''}${targetable ? ' targetable' : ''}" ${act ? `data-act="${act}"` : ''} data-uid="${c.uid}" data-target="${tgt}">
+    ${art(c)}
+    <span class="gpow">${pw}</span>
+    ${c.don ? `<span class="gdon">▲${c.don}</span>` : ''}
+    ${isGBlocker(c) ? '<span class="gkw">B</span>' : ''}
+  </button>`;
+}
+const isGBlocker = (c) => window.OPGame && OPGame.isBlocker(c.card);
+
+function renderBoard() {
+  const m = Game.match; if (!m) return;
+  const me = m.players[0], cpu = m.players[1];
+  const myTurn = m.active === 0 && !m.pending && m.phase === 'main';
+  const defending = m.pending && m.pending.type === 'defense';
+  const over = m.winner !== null;
+
+  if (m.pending && m.pending.type === 'mulligan') { renderMulligan(); return; }
+
+  const sel = Game.selAttacker;
+  const canTargetCpuLeader = myTurn && sel != null;
+  // Gegnerische Charaktere sind nur als Ziel wählbar, wenn sie gerastet sind
+  const cpuCharTargetable = (c) => myTurn && sel != null && c.rested;
+  const myAttackable = (c) => myTurn && m.canAttack(me, c);
+
+  view.innerHTML = `
+    <div class="board">
+      <div class="side cpu">
+        <div class="pinfo"><b>${esc(cpu.name)}</b>
+          <span class="life">❤ ${cpu.life.length}</span>
+          <span class="chip">Hand ${cpu.hand.length}</span>
+          <span class="chip">DON!! ${cpu.donAvail}/${cpu.don}</span>
+          <span class="chip">Deck ${cpu.deck.length}</span>
+        </div>
+        <div class="units">${gUnit(cpu, cpu.leader, 'cpu', { targetable: canTargetCpuLeader })}
+          ${cpu.chars.map((c) => gUnit(cpu, c, 'cpu', { targetable: cpuCharTargetable(c) })).join('')}</div>
+      </div>
+
+      <div class="center">
+        <div class="phase">${over ? (m.winner === 0 ? '🏆 Du hast gewonnen!' : 'Der Computer gewinnt.') : (myTurn ? 'Dein Zug' : (defending ? 'Verteidige dich!' : 'Computer ist am Zug …'))}</div>
+        <div class="glog" id="glog">${m.log.slice(-6).map((l) => `<div>${esc(l)}</div>`).join('')}</div>
+        ${over ? '' : myTurn ? `<div class="row gactions">
+          <button class="btn small ${Game.attachMode ? 'primary' : ''}" data-act="g-attach-mode">${Game.attachMode ? 'DON!! geben: an' : 'DON!! geben'}</button>
+          <button class="btn small" data-act="g-endturn">Zug beenden</button>
+        </div>${sel != null ? '<p class="hint">Angreifer gewählt – tippe ein gegnerisches Ziel (Leader oder gerasteten Charakter). Nochmal auf den Angreifer tippt ab.</p>' : Game.attachMode ? '<p class="hint">Tippe deinen Leader oder Charakter, um 1 DON!! zu geben (+1000).</p>' : '<p class="hint">Tippe eine Handkarte zum Ausspielen, oder einen aktiven Charakter/Leader zum Angreifen.</p>'}` : ''}
+      </div>
+
+      <div class="side me">
+        <div class="units">${gUnit(me, me.leader, 'me', { sel: sel === me.leader.uid })}
+          ${me.chars.map((c) => gUnit(me, c, 'me', { sel: sel === c.uid })).join('')}</div>
+        <div class="pinfo"><b>Du</b>
+          <span class="life">❤ ${me.life.length}</span>
+          <span class="chip">DON!! ${me.donAvail}/${me.don}</span>
+          <span class="chip">Deck ${me.deck.length}</span>
+        </div>
+        <div class="hand">${me.hand.map((c) => gHandCard(me, c, myTurn)).join('') || '<p class="hint">Hand leer.</p>'}</div>
+      </div>
+    </div>
+    ${defending ? defenseOverlay() : ''}
+    ${over ? `<div class="row" style="margin-top:10px"><button class="btn primary" data-act="g-restart">Nochmal</button><button class="btn" data-act="g-exit">Beenden</button></div>` : ''}`;
+  const lg = $('#glog'); if (lg) lg.scrollTop = lg.scrollHeight;
+}
+
+function gHandCard(p, c, myTurn) {
+  const cost = OPGame._pint(c.card.cost);
+  const playable = myTurn && cost <= p.donAvail && !(c.card.t === 'Character' && p.chars.length >= 5);
+  return `<button class="ghand${playable ? '' : ' dim'}" ${playable ? 'data-act="g-hand"' : ''} data-uid="${c.uid}">
+    ${art(c)}
+    <span class="gcost">${cost}</span>
+    <span class="gname">${esc(c.card.name)}</span>
+    ${OPGame.counterVal(c.card) ? `<span class="gctr">+${OPGame.counterVal(c.card)}</span>` : ''}
+  </button>`;
+}
+
+function renderMulligan() {
+  const m = Game.match, me = m.players[0];
+  view.innerHTML = `
+    <div class="center" style="gap:12px">
+      <div class="phase">Starthand</div>
+      <p class="hint">Behalte deine Hand oder ziehe einmal komplett neu.</p>
+      <div class="hand">${me.hand.map((c) => `<div class="ghand">${art(c)}<span class="gcost">${OPGame._pint(c.card.cost)}</span><span class="gname">${esc(c.card.name)}</span></div>`).join('')}</div>
+      <div class="row"><button class="btn primary" data-act="g-mull-keep">Behalten</button><button class="btn" data-act="g-mull-new">Neu ziehen</button></div>
+    </div>`;
+}
+
+function defenseOverlay() {
+  const m = Game.match, me = m.players[0];
+  const battle = m.pending.battle;
+  const atk = m.players[battle.atkIdx];
+  const a = battle.aUid === atk.leader.uid ? atk.leader : atk.chars.find((c) => c.uid === battle.aUid);
+  const target = battle.targetIsLeader ? me.leader : me.chars.find((c) => c.uid === battle.targetUid);
+  const ap = a ? m.power(atk, a) : 0;
+  const addCounter = Game.def.counters.reduce((s, uid) => { const h = me.hand.find((c) => c.uid === uid); return s + (h ? OPGame.counterVal(h.card) : 0); }, 0);
+  const tp = (target ? m.power(me, target) : 0) + addCounter;
+  const blockers = m.availableBlockers();
+  const counterCards = me.hand.filter((c) => OPGame.counterVal(c.card) > 0);
+  return `<div class="defense">
+    <div class="dbox">
+      <b>Angriff: ${esc(a ? a.card.name : '')} (${ap})</b>
+      <p class="hint">Ziel: ${battle.targetIsLeader ? 'dein Leader' : esc(target ? target.card.name : '')} — Stärke ${tp}${tp > ap ? ' (hält)' : ' (wird getroffen)'}</p>
+      ${blockers.length ? `<p class="section-title">Blocken</p><div class="row">${blockers.map((b) => `<button class="btn small ${Game.def.blocker === b.uid ? 'primary' : ''}" data-act="g-def-block" data-uid="${b.uid}">${esc(b.card.name)} (${m.power(me, b)})</button>`).join('')}</div>` : ''}
+      ${counterCards.length ? `<p class="section-title">Konter von der Hand</p><div class="row">${counterCards.map((c) => `<button class="btn small ${Game.def.counters.includes(c.uid) ? 'primary' : ''}" data-act="g-def-counter" data-uid="${c.uid}">${esc(c.card.name)} +${OPGame.counterVal(c.card)}</button>`).join('')}</div>` : ''}
+      <div class="row" style="margin-top:8px"><button class="btn primary" data-act="g-def-confirm">Bestätigen</button></div>
+    </div>
+  </div>`;
+}
+
+// Klick-Steuerung für den Spielbereich
+function gameClick(el) {
+  const m = Game.match;
+  const act = el.dataset.act;
+  if (act === 'deck-play') { Game.cfg.deckId = el.dataset.id; Game.match = null; location.hash = 'spielen'; return true; }
+  if (!act || !act.startsWith('g-')) return false;
+  if (act === 'g-diff') { Game.cfg.difficulty = el.dataset.v; renderSetup(); return true; }
+  if (act === 'g-start') { startMatch(); return true; }
+  if (!m) return true;
+  if (act === 'g-mull-keep') { m.doMulligan(true); return true; }
+  if (act === 'g-mull-new') { m.doMulligan(false); return true; }
+  if (act === 'g-attach-mode') { Game.attachMode = !Game.attachMode; Game.selAttacker = null; renderBoard(); return true; }
+  if (act === 'g-endturn') { Game.selAttacker = null; Game.attachMode = false; m.playerEndTurn(); return true; }
+  if (act === 'g-hand') { m.playerPlay(+el.dataset.uid); return true; }
+  if (act === 'g-unit') {
+    const uid = +el.dataset.uid;
+    if (Game.attachMode) { m.playerAttach(uid, 1); return true; }
+    Game.selAttacker = (Game.selAttacker === uid) ? null : uid; renderBoard(); return true;
+  }
+  if (act === 'g-target') {
+    if (Game.selAttacker == null) return true;
+    const target = el.dataset.target === 'leader' ? 'leader' : +el.dataset.uid;
+    const a = Game.selAttacker; Game.selAttacker = null;
+    m.playerAttack(a, target); return true;
+  }
+  if (act === 'g-def-block') { Game.def.blocker = (Game.def.blocker === +el.dataset.uid) ? null : +el.dataset.uid; renderBoard(); return true; }
+  if (act === 'g-def-counter') { const u = +el.dataset.uid; const i = Game.def.counters.indexOf(u); if (i < 0) Game.def.counters.push(u); else Game.def.counters.splice(i, 1); renderBoard(); return true; }
+  if (act === 'g-def-confirm') { const d = Game.def; Game.def = { blocker: null, counters: [] }; m.resolveDefense({ blockerUid: d.blocker, counterUids: d.counters }); return true; }
+  if (act === 'g-restart') { startMatch(); return true; }
+  if (act === 'g-exit') { Game.match = null; location.hash = 'decks'; return true; }
+  return true;
+}
+
 
 /* ---------- Start ---------- */
 (async function init() {
