@@ -504,8 +504,34 @@ function viewDeck(id) {
           <span class="nm"><b>${esc(c.name)}</b><span>${esc(c.n)}${c.v ? ` · ${esc(c.v)}` : ''} · ${eur(valueOf(c))}</span></span></button>
           <span class="stepper small"><button data-act="deck-dec" data-id="${esc(id)}" data-k="${esc(c.k)}" aria-label="Eine weniger">−</button><output>${n}</output><button data-act="deck-inc" data-id="${esc(id)}" data-k="${esc(c.k)}" aria-label="Eine mehr" ${n >= max || (c.t !== 'Leader' && i.perNum[c.n] >= 4) ? 'disabled' : ''}>+</button></span></div>`;
       }).join('')}</div>`).join('') : '<p class="empty"><strong>Das Deck ist leer</strong>Füge Karten aus deinem Besitz hinzu.</p>'}
+    <details class="box"><summary>Deckliste teilen</summary><div class="body">
+      <p class="hint">Kopiere die Liste und schick sie mir im Chat – dann baue ich die Karteneffekte für genau dieses Deck.</p>
+      <button class="btn small" data-act="deck-copy" data-id="${esc(id)}">Deckliste kopieren</button>
+      <pre class="decklist" id="decklist">${esc(deckListText(deck))}</pre>
+    </div></details>
     <div class="row"><button class="btn small danger" data-act="deck-del" data-id="${esc(id)}">Deck löschen</button></div>`;
   $('#deck-name').onchange = (e) => { deck.name = e.target.value.trim() || 'Deck'; saveStore(); $('#title').textContent = deck.name; };
+}
+function deckListText(deck) {
+  const lines = [];
+  const leader = Object.keys(deck.cards).map((k) => DB.byKey.get(k)).find((c) => c && c.t === 'Leader');
+  lines.push(deck.name);
+  if (leader) lines.push(`Leader: ${leader.n} ${leader.name}${leader.v ? ` (${leader.v})` : ''}`);
+  const main = Object.entries(deck.cards).map(([k, n]) => ({ c: DB.byKey.get(k), n })).filter((e) => e.c && e.c.t !== 'Leader');
+  main.sort((a, b) => a.c.n.localeCompare(b.c.n) || a.c.k.localeCompare(b.c.k));
+  for (const e of main) lines.push(`${e.n}x ${e.c.n} ${e.c.name}${e.c.v ? ` (${e.c.v})` : ''}`);
+  const total = main.reduce((s, e) => s + e.n, 0);
+  lines.push(`(${total} Karten${leader ? ' + Leader' : ''})`);
+  return lines.join('\n');
+}
+async function copyDeckList(id) {
+  const deck = deckById(id);
+  if (!deck) return;
+  const text = deckListText(deck);
+  try { await navigator.clipboard.writeText(text); toast('Deckliste kopiert – im Chat einfügen.'); return; }
+  catch { /* Fallback: Text markieren */ }
+  const pre = $('#decklist');
+  if (pre) { const r = document.createRange(); r.selectNodeContents(pre); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); try { document.execCommand('copy'); toast('Deckliste kopiert.'); } catch { toast('Bitte den Text oben markieren und kopieren.'); } }
 }
 function deckChange(id, k, delta) {
   const deck = deckById(id); const card = DB.byKey.get(k);
@@ -848,6 +874,7 @@ document.addEventListener('click', (e) => {
     case 'alert-ack': ackAlerts([k]); rerender(); break;
     case 'alert-ack-all': ackAlerts(priceAlerts().map((a) => a.card.k)); rerender(); break;
     case 'deck-new': newDeck(); break;
+    case 'deck-copy': copyDeckList(id); break;
     case 'deck-add': openPicker(id); break;
     case 'deck-inc': if (deckChange(id, k, 1)) rerender(); break;
     case 'deck-dec': if (deckChange(id, k, -1)) rerender(); break;
