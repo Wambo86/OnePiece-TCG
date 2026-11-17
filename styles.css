@@ -254,3 +254,35 @@ details.box .body { padding: 0 0 12px; display: flex; flex-direction: column; ga
 .alarm-row .nm > b { display: block; font-size: .92rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .alarm-row .nm span { font-size: .78rem; color: var(--muted); font-variant-numeric: tabular-nums; }
 .alarm-row .nm .up { color: var(--ok); }
+
+/* Unter-Navigation (Serien / Wunschliste) */
+.subnav { display: flex; gap: 8px; flex-wrap: wrap; }
+.subnav a { flex: 1 1 140px; text-align: center; min-height: 40px; display: flex; align-items: center; justify-content: center; padding: 0 12px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line); color: var(--fg); text-decoration: none; font-weight: 650; font-size: .9rem; }
+
+/* Serien-Fortschritt */
+.setlist { display: flex; flex-direction: column; gap: 8px; }
+.setrow { display: block; width: 100%; text-align: left; padding: 10px 12px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); color: inherit; cursor: pointer; }
+.setrow.static { cursor: default; }
+.setrow-top { display: flex; align-items: baseline; gap: 8px; }
+.setrow-top b { font-size: .98rem; }
+.setrow-top .nm { color: var(--muted); font-size: .85rem; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.setrow-top .n { font-variant-numeric: tabular-nums; font-size: .85rem; font-weight: 700; color: var(--muted); }
+.bar { height: 7px; border-radius: 4px; background: var(--surface-2); overflow: hidden; margin-top: 7px; }
+.bar i { display: block; height: 100%; background: var(--accent); border-radius: 4px; }
+.bar i.done { background: var(--ok); }
+
+/* Kontrollkästchen-Label */
+.chk { display: inline-flex; align-items: center; gap: 7px; font-size: .88rem; color: var(--muted); cursor: pointer; min-height: 36px; }
+.chk input { width: 18px; height: 18px; accent-color: var(--accent); }
+.chk.fast { padding: 8px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--fg); width: 100%; }
+
+/* Schnell-Scan-Protokoll */
+.fastlog { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.fastlog-head { display: flex; align-items: center; gap: 10px; }
+.fastlog-head b { font-size: 1rem; }
+.fastlog-head .hint { flex: 1; min-width: 0; }
+.fastlog-row { display: flex; align-items: center; gap: 10px; border: 0; background: none; padding: 4px 0; text-align: left; border-top: 1px solid var(--line); }
+.fastlog-row .art { width: 30px; flex: none; aspect-ratio: 63/88; border-radius: 3px; overflow: hidden; background: var(--surface-2); position: relative; }
+.fastlog-row .nm { min-width: 0; }
+.fastlog-row .nm > b { display: block; font-size: .9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fastlog-row .nm span { font-size: .76rem; color: var(--muted); font-variant-numeric: tabular-nums; }

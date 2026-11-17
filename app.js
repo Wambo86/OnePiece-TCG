@@ -33,11 +33,11 @@ async function loadData() {
 
 /* ---------- Speicher ---------- */
 const STORE_KEY = 'optcg.logbuch.v1';
-let store = { own: {}, decks: [], pick: {}, base: {}, notify: false, notifiedFor: '' };
+let store = { own: {}, decks: [], pick: {}, base: {}, notify: false, notifiedFor: '', want: {}, fast: false };
 function loadStore() {
   try {
     const raw = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
-    if (raw && typeof raw === 'object') store = { own: raw.own || {}, decks: Array.isArray(raw.decks) ? raw.decks : [], pick: raw.pick || {}, base: raw.base || {}, notify: !!raw.notify, notifiedFor: raw.notifiedFor || '' };
+    if (raw && typeof raw === 'object') store = { own: raw.own || {}, decks: Array.isArray(raw.decks) ? raw.decks : [], pick: raw.pick || {}, base: raw.base || {}, notify: !!raw.notify, notifiedFor: raw.notifiedFor || '', want: raw.want || {}, fast: !!raw.fast };
   } catch { /* leerer Start */ }
 }
 function saveStore() {
@@ -185,9 +185,40 @@ function setOptions() {
 }
 const colorOptions = () => COLORS.map((c) => `<option value="${c}">${COLOR_DE[c]}</option>`).join('');
 
+/* ---------- Wunschliste ---------- */
+const wanted = (k) => !!store.want[k];
+function setWant(k, on) { if (on) store.want[k] = 1; else delete store.want[k]; saveStore(); }
+
+/* ---------- Serien-Fortschritt ---------- */
+// Besitzt du irgendein Motiv einer Kartennummer, zählt die Nummer als vorhanden.
+const hasNumber = (n) => (DB.byNum.get(n) || []).some((c) => owned(c.k));
+function setStats() {
+  const sets = new Map();
+  for (const c of DB.cards) {
+    const prefix = c.n.split('-')[0];
+    let e = sets.get(prefix);
+    if (!e) { e = { prefix, name: c.n.startsWith('P-') ? 'Promos' : c.set, named: false, nums: new Set(), owned: new Set() }; sets.set(prefix, e); }
+    // Serienname vom Standard-Druck (k === n) nehmen, nicht von einem Promo-Nachdruck
+    if (!e.named && !c.n.startsWith('P-') && c.k === c.n) { e.name = c.set; e.named = true; }
+    e.nums.add(c.n);
+    if (owned(c.k)) e.owned.add(c.n);
+  }
+  return [...sets.values()]
+    .map((e) => ({ prefix: e.prefix, name: e.name, total: e.nums.size, have: e.owned.size }))
+    .sort((a, b) => a.prefix.localeCompare(b.prefix));
+}
+// Fehlende Nummern einer Serie und die Kosten, sie (als Standard-Druck) zu vervollständigen.
+function setMissing(prefix) {
+  const nums = new Set();
+  for (const c of DB.cards) if (c.n.split('-')[0] === prefix) nums.add(c.n);
+  let missing = 0, cost = 0;
+  for (const n of nums) if (!hasNumber(n)) { missing++; cost += valueOf(DB.byNum.get(n)[0]); }
+  return { missing, cost };
+}
+
 /* ---------- Router ---------- */
 const view = $('#view');
-const ui = { besitz: { q: '', sort: 'num', color: '', set: '' }, alle: { q: '', set: '', color: '', limit: 60 } };
+const ui = { besitz: { q: '', sort: 'num', color: '', set: '' }, alle: { q: '', set: '', color: '', limit: 60, onlyMissing: false } };
 function route() {
   const hash = location.hash.replace('#', '') || (Object.keys(store.own).length ? 'besitz' : 'scan');
   const [name, arg] = hash.startsWith('deck-') ? ['deck', hash.slice(5)] : [hash, null];
@@ -197,7 +228,7 @@ function route() {
     if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   });
   $('#top-actions').innerHTML = '';
-  ({ scan: viewScan, besitz: viewBesitz, decks: viewDecks, deck: viewDeck, alle: viewAlle }[name] || viewBesitz)(arg);
+  ({ scan: viewScan, besitz: viewBesitz, decks: viewDecks, deck: viewDeck, alle: viewAlle, serien: viewSerien, wunsch: viewWunsch }[name] || viewBesitz)(arg);
   window.scrollTo(0, 0);
 }
 const rerender = () => { const y = window.scrollY; route(); window.scrollTo(0, y); };
@@ -216,6 +247,10 @@ function viewBesitz() {
   const s = ui.besitz;
   view.innerHTML = `
     ${alertBanner()}
+    <div class="subnav">
+      <a href="#serien">Serien-Fortschritt</a>
+      <a href="#wunsch">Wunschliste${Object.keys(store.want).length ? ` · ${Object.keys(store.want).length}` : ''}</a>
+    </div>
     <div class="stats">
       <div class="stat"><b>${total}</b><span>Karten</span></div>
       <div class="stat"><b>${all.length}</b><span>verschiedene</span></div>
@@ -262,12 +297,55 @@ async function importBackup(file) {
   try {
     const data = JSON.parse(await file.text());
     if (!data || typeof data.own !== 'object') throw new Error();
-    store = { own: data.own || {}, decks: Array.isArray(data.decks) ? data.decks : [], pick: data.pick || {}, base: data.base || {}, notify: !!data.notify, notifiedFor: data.notifiedFor || '' };
+    store = { own: data.own || {}, decks: Array.isArray(data.decks) ? data.decks : [], pick: data.pick || {}, base: data.base || {}, notify: !!data.notify, notifiedFor: data.notifiedFor || '', want: data.want || {}, fast: !!data.fast };
     saveStore(); toast('Sicherung geladen.'); rerender();
   } catch { toast('Diese Datei ist keine gültige Sicherung.'); }
 }
 
 /* ---------- Alle Karten ---------- */
+function viewSerien() {
+  $('#title').textContent = 'Serien';
+  $('#top-actions').innerHTML = '<a class="btn small" href="#besitz">Zurück</a>';
+  const stats = setStats();
+  const have = stats.reduce((s, e) => s + e.have, 0);
+  const all = stats.reduce((s, e) => s + e.total, 0);
+  const pctAll = all ? Math.round(have / all * 100) : 0;
+  view.innerHTML = `
+    <div class="stats">
+      <div class="stat"><b>${have} / ${all}</b><span>Karten gesamt</span></div>
+      <div class="stat"><b>${pctAll}%</b><span>Sammlung komplett</span></div>
+      <div class="stat"><b>${stats.filter((e) => e.have === e.total && e.total).length}</b><span>Serien komplett</span></div>
+    </div>
+    <p class="hint">Eine Karte zählt als vorhanden, sobald du irgendein Motiv davon besitzt. Tippe eine Serie an, um die fehlenden Karten zu sehen.</p>
+    <div class="setlist">${stats.map((e) => {
+      const pct = e.total ? Math.round(e.have / e.total * 100) : 0;
+      const done = e.have === e.total && e.total;
+      return `<button class="setrow" data-act="open-set" data-set="${esc(e.prefix)}">
+        <div class="setrow-top"><b>${esc(e.prefix)}</b><span class="nm">${esc(e.name)}</span><span class="n">${e.have} / ${e.total}${done ? ' ✓' : ''}</span></div>
+        <div class="bar"><i style="width:${pct}%" class="${done ? 'done' : ''}"></i></div></button>`;
+    }).join('')}</div>`;
+}
+
+function viewWunsch() {
+  $('#title').textContent = 'Wunschliste';
+  $('#top-actions').innerHTML = '<a class="btn small" href="#besitz">Zurück</a>';
+  const all = Object.keys(store.want).map((k) => DB.byKey.get(k)).filter(Boolean);
+  if (!all.length) {
+    view.innerHTML = `<div class="empty"><strong>Wunschliste ist leer</strong>Öffne eine Karte und tippe „Auf Wunschliste“, um sie hier zu sammeln. So siehst du, was dir noch fehlt und was es kostet.<br><a class="btn primary" href="#alle">Karten durchsuchen</a></div>`;
+    return;
+  }
+  const cost = all.reduce((s, c) => s + valueOf(c), 0);
+  const haveAlready = all.filter((c) => owned(c.k)).length;
+  view.innerHTML = `
+    <div class="stats">
+      <div class="stat"><b>${all.length}</b><span>auf der Liste</span></div>
+      <div class="stat price"><b>${eur(cost)}</b><span>Summe (Cardmarket)</span></div>
+      <div class="stat"><b>${haveAlready}</b><span>schon im Besitz</span></div>
+    </div>
+    <p class="hint">Tippe eine Karte an, um sie zu öffnen oder wieder von der Liste zu nehmen.</p>
+    <div class="grid">${sortCards(all, 'num').map((c) => tile(c, { qty: owned(c.k) ? `×${owned(c.k)}` : null })).join('')}</div>`;
+}
+
 function viewAlle() {
   $('#title').textContent = 'Alle Karten';
   const s = ui.alle;
@@ -277,14 +355,31 @@ function viewAlle() {
       <select class="field" id="alle-set" style="width:auto" aria-label="Set"><option value="">Alle Sets</option>${setOptions()}</select>
       <select class="field" id="alle-color" style="width:auto" aria-label="Farbe"><option value="">Alle Farben</option>${colorOptions()}</select>
     </div>
-    <p class="hint" id="alle-count"></p>
+    <div id="alle-progress"></div>
+    <div class="row" style="justify-content:space-between">
+      <p class="hint" id="alle-count" style="margin:0"></p>
+      <label class="chk"><input type="checkbox" id="alle-missing" ${s.onlyMissing ? 'checked' : ''}> nur fehlende</label>
+    </div>
     <div class="grid" id="alle-grid"></div>
     <button class="btn" id="alle-more" hidden>Mehr anzeigen</button>`;
   $('#alle-set').value = s.set; $('#alle-color').value = s.color;
   const draw = () => {
-    const list = DB.cards.filter((c) => (!s.set || c.n.startsWith(s.set + '-')) && (!s.color || c.col.includes(s.color)) && matches(c, s.q));
-    $('#alle-count').textContent = `${list.length.toLocaleString('de-DE')} Karten`;
-    $('#alle-grid').innerHTML = list.slice(0, s.limit).map((c) => tile(c, { qty: owned(c.k) ? `×${owned(c.k)}` : null })).join('');
+    let list = DB.cards.filter((c) => (!s.set || c.n.startsWith(s.set + '-')) && (!s.color || c.col.includes(s.color)) && matches(c, s.q));
+    if (s.onlyMissing) {
+      // Eine Zeile je fehlender Nummer (Standard-Motiv), nicht jede Variante einzeln
+      const seen = new Set();
+      list = list.filter((c) => !hasNumber(c.n) && !seen.has(c.n) && seen.add(c.n));
+    }
+    // Fortschritt der gewählten Serie
+    const prog = $('#alle-progress');
+    if (s.set) {
+      const st = setStats().find((e) => e.prefix === s.set);
+      const m = setMissing(s.set);
+      const pct = st && st.total ? Math.round(st.have / st.total * 100) : 0;
+      prog.innerHTML = st ? `<div class="setrow static"><div class="setrow-top"><b>${esc(s.set)}</b><span class="n">${st.have} / ${st.total} · ${pct}%</span></div><div class="bar"><i style="width:${pct}%"></i></div><p class="hint" style="margin:6px 0 0">${m.missing ? `${m.missing} fehlen · ca. ${eur(m.cost)} zum Vervollständigen` : 'Serie komplett ✓'}</p></div>` : '';
+    } else prog.innerHTML = '';
+    $('#alle-count').textContent = `${list.length.toLocaleString('de-DE')} ${s.onlyMissing ? 'fehlende' : 'Karten'}`;
+    $('#alle-grid').innerHTML = list.slice(0, s.limit).map((c) => tile(c, { qty: owned(c.k) ? `×${owned(c.k)}` : null })).join('') || '<p class="hint">Nichts gefunden.</p>';
     $('#alle-more').hidden = list.length <= s.limit;
   };
   draw();
@@ -292,6 +387,7 @@ function viewAlle() {
   $('#alle-set').onchange = (e) => { s.set = e.target.value; s.limit = 60; draw(); };
   $('#alle-color').onchange = (e) => { s.color = e.target.value; s.limit = 60; draw(); };
   $('#alle-more').onclick = () => { s.limit += 120; draw(); };
+  $('#alle-missing').onchange = (e) => { s.onlyMissing = e.target.checked; s.limit = 60; draw(); };
 }
 
 /* ---------- Kartendetails ---------- */
@@ -318,6 +414,9 @@ function openCard(k) {
       </div>
       <div class="own-row"><span><b>Im Besitz</b></span>
         <span class="stepper"><button data-act="own-dec" aria-label="Eine weniger" ${owned(k) ? '' : 'disabled'}>−</button><output>${owned(k)}</output><button data-act="own-inc" aria-label="Eine mehr">+</button></span>
+      </div>
+      <div class="own-row"><span><b>Wunschliste</b></span>
+        <button class="btn small ${wanted(k) ? 'primary' : ''}" data-act="want-toggle">${wanted(k) ? 'Auf der Liste ✓' : 'Auf Wunschliste'}</button>
       </div>
       ${sibs.length > 1 ? `<p class="section-title">Motive dieser Karte (${sibs.length})</p>
         <div class="variants">${sibs.map((c) => `<button data-act="open" data-k="${esc(c.k)}" aria-pressed="${c.k === k}">${art(c)}<small>${owned(c.k) ? `×${owned(c.k)} · ` : ''}${esc(c.v || 'Standard')}</small></button>`).join('')}</div>` : ''}
@@ -481,6 +580,7 @@ function findNumbers(text) {
 
 const Scanner = {
   stream: null, worker: null, workerPromise: null, timer: null, busy: false, round: 0, recent: [], liveLast: null, current: null, sel: null,
+  fastLog: [], fastSeen: {},
 
   async getWorker() {
     if (!this.workerPromise) {
@@ -630,8 +730,41 @@ const Scanner = {
       this.sel = DB.byNum.get(num)[0].k;
       navigator.vibrate?.(40);
     }
+    if (store.fast) { this.fastAdd(num); return; }
     this.status(`${num} erkannt`, true);
     this.drawResult();
+  },
+  // Schnell-Scan: dieselbe Nummer wird erst wieder gezählt, wenn sie ~3,5 s nicht mehr gesehen wurde.
+  fastAdd(num) {
+    const now = Date.now(), prev = this.fastSeen[num] || 0;
+    this.fastSeen[num] = now;
+    if (now - prev < 3500) { this.status(`${num} erfasst – nächste Karte hinhalten`, true); return; }
+    const card = DB.byNum.get(num)[0];
+    setOwned(card.k, owned(card.k) + 1);
+    this.fastLog.unshift({ k: card.k, at: now });
+    if (this.fastLog.length > 40) this.fastLog.pop();
+    navigator.vibrate?.(30);
+    this.status(`${card.name} +1 · jetzt ${owned(card.k)}×`, true);
+    this.drawFastLog();
+  },
+  undoFast() {
+    const last = this.fastLog.shift();
+    if (!last) return;
+    setOwned(last.k, Math.max(0, owned(last.k) - 1));
+    const c = DB.byKey.get(last.k); if (c) this.fastSeen[c.n] = 0;
+    this.drawFastLog();
+    toast('Letzte Karte zurückgenommen.');
+  },
+  drawFastLog() {
+    const box = $('#scan-fastlog');
+    if (!box) return;
+    if (!store.fast) { box.hidden = true; return; }
+    box.hidden = false;
+    const n = this.fastLog.length;
+    box.innerHTML = `
+      <div class="fastlog-head"><b>Schnell-Scan</b><span class="hint">${n ? `${n} in dieser Sitzung` : 'bereit – Karten nacheinander hinhalten'}</span>${n ? '<button class="btn small" data-act="scan-undo">Rückgängig</button>' : ''}</div>
+      ${n ? '<p class="hint">Es wird das Standard-Motiv erfasst. Andere Motive kannst du später in „Besitz“ anpassen.</p>' : ''}
+      ${this.fastLog.slice(0, 12).map((e) => { const c = DB.byKey.get(e.k); return c ? `<button class="fastlog-row open" data-act="open" data-k="${esc(c.k)}">${art(c)}<span class="nm"><b>${esc(c.name)}</b><span>${esc(c.n)} · jetzt ${owned(c.k)}×</span></span></button>` : ''; }).join('')}`;
   },
 
   status(msg, hit) { const el = $('#scan-status'); if (el) { el.textContent = msg; el.classList.toggle('hit', !!hit); } },
@@ -639,7 +772,7 @@ const Scanner = {
   drawResult() {
     const box = $('#scan-result');
     if (!box) return;
-    if (!this.current) { box.hidden = true; return; }
+    if (store.fast || !this.current) { box.hidden = true; return; }
     const list = DB.byNum.get(this.current);
     const card = DB.byKey.get(this.sel) || list[0];
     const p = priceOf(card);
@@ -667,8 +800,10 @@ function viewScan() {
       <div class="guide" id="scan-guide" hidden></div>
       <div class="idle" id="scan-idle"><p>Die App liest die Kartennummer unten rechts auf der Karte, z. B. OP01-001.</p><button class="btn primary" data-act="scan-start">Kamera starten</button></div>
     </div>
+    <label class="chk fast"><input type="checkbox" id="scan-fast" ${store.fast ? 'checked' : ''}> Schnell-Scan: jede erkannte Karte automatisch +1</label>
     <p class="scan-status" id="scan-status"></p>
     <div class="result" id="scan-result" hidden></div>
+    <div class="fastlog" id="scan-fastlog" hidden></div>
     <div class="row">
       <label class="btn grow">Foto aufnehmen<input type="file" id="scan-file" accept="image/*" capture="environment" hidden></label>
       <button class="btn" id="scan-stop" data-act="scan-stop" hidden>Kamera aus</button>
@@ -678,6 +813,8 @@ function viewScan() {
       <button class="btn" type="submit">Suchen</button>
     </form>`;
   Scanner.drawResult();
+  Scanner.drawFastLog();
+  $('#scan-fast').onchange = (e) => { store.fast = e.target.checked; saveStore(); Scanner.current = null; Scanner.drawResult(); Scanner.drawFastLog(); Scanner.status(store.fast ? 'Schnell-Scan an – Karten nacheinander hinhalten.' : ''); };
   $('#scan-file').onchange = (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) Scanner.photo(f); };
   $('#scan-manual').onsubmit = (e) => {
     e.preventDefault();
@@ -701,6 +838,8 @@ document.addEventListener('click', (e) => {
     case 'close-picker': picker.close(); break;
     case 'own-inc': setOwned(sheetKey, owned(sheetKey) + 1); openCard(sheetKey); break;
     case 'own-dec': setOwned(sheetKey, owned(sheetKey) - 1); openCard(sheetKey); break;
+    case 'want-toggle': setWant(sheetKey, !wanted(sheetKey)); openCard(sheetKey); break;
+    case 'open-set': ui.alle.set = el.dataset.set; ui.alle.q = ''; ui.alle.color = ''; ui.alle.onlyMissing = true; ui.alle.limit = 60; location.hash = 'alle'; break;
     case 'export': exportBackup(); break;
     case 'notify-enable': enableNotifications(); break;
     case 'alert-ack': ackAlerts([k]); rerender(); break;
@@ -716,6 +855,7 @@ document.addEventListener('click', (e) => {
     case 'pick-add': if (deckChange(pick.id, k, 1)) drawPicker(); break;
     case 'scan-start': Scanner.start(); break;
     case 'scan-stop': Scanner.stop(); Scanner.status(''); break;
+    case 'scan-undo': Scanner.undoFast(); break;
     case 'scan-sel': Scanner.sel = k; Scanner.drawResult(); break;
     case 'scan-add': {
       const card = DB.byKey.get(Scanner.sel);
