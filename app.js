@@ -906,6 +906,7 @@ const Game = {
   cfg: { deckId: null, difficulty: 'mittel', cpu: 0 },
   attachMode: false,
   selAttacker: null,
+  preview: null,
   def: { blocker: null, counters: [] },
 };
 
@@ -961,7 +962,7 @@ function startMatch() {
   if (!leader) { toast('Dein Deck hat keinen Leader.'); return; }
   const playerDeck = { name: deck.name, leader, cards: deck.cards, lookup: (k) => DB.byKey.get(k) };
   const cpuDeck = OPGame.cpuDecks(DB)[Game.cfg.cpu] || OPGame.cpuDecks(DB)[0];
-  Game.selAttacker = null; Game.attachMode = false; Game.def = { blocker: null, counters: [] };
+  Game.selAttacker = null; Game.attachMode = false; Game.preview = null; Game.def = { blocker: null, counters: [] };
   Game.match = OPGame.createMatch({ playerDeck, cpuDeck, difficulty: Game.cfg.difficulty, delay: 500, onUpdate: () => { if (location.hash.replace('#', '') === 'spielen') renderBoard(); } });
   Game.match.start();
   renderBoard();
@@ -970,13 +971,14 @@ function startMatch() {
 // Mini-Karte auf dem Spielfeld
 function gUnit(p, c, side, { sel = false, targetable = false } = {}) {
   const pw = Game.match.power(p, c);
-  const act = targetable ? 'g-target' : (side === 'me' ? 'g-unit' : '');
+  const act = targetable ? 'g-target' : 'g-view';
   const tgt = c === p.leader ? 'leader' : c.uid;
-  return `<button class="gunit${c.rested ? ' rested' : ''}${sel ? ' sel' : ''}${targetable ? ' targetable' : ''}" ${act ? `data-act="${act}"` : ''} data-uid="${c.uid}" data-target="${tgt}">
-    ${art(c)}
+  return `<button class="gunit${c.rested ? ' rested' : ''}${sel ? ' sel' : ''}${targetable ? ' targetable' : ''}" data-act="${act}" data-uid="${c.uid}" data-target="${tgt}" data-side="${side}">
+    ${art(c.card)}
     <span class="gpow">${pw}</span>
     ${c.don ? `<span class="gdon">▲${c.don}</span>` : ''}
     ${isGBlocker(c) ? '<span class="gkw">B</span>' : ''}
+    <span class="guname">${esc(c.card.name)}</span>
   </button>`;
 }
 const isGBlocker = (c) => window.OPGame && OPGame.isBlocker(c.card);
@@ -1013,9 +1015,8 @@ function renderBoard() {
         <div class="phase">${over ? (m.winner === 0 ? '🏆 Du hast gewonnen!' : 'Der Computer gewinnt.') : (myTurn ? 'Dein Zug' : (defending ? 'Verteidige dich!' : 'Computer ist am Zug …'))}</div>
         <div class="glog" id="glog">${m.log.slice(-6).map((l) => `<div>${esc(l)}</div>`).join('')}</div>
         ${over ? '' : myTurn ? `<div class="row gactions">
-          <button class="btn small ${Game.attachMode ? 'primary' : ''}" data-act="g-attach-mode">${Game.attachMode ? 'DON!! geben: an' : 'DON!! geben'}</button>
           <button class="btn small" data-act="g-endturn">Zug beenden</button>
-        </div>${sel != null ? '<p class="hint">Angreifer gewählt – tippe ein gegnerisches Ziel (Leader oder gerasteten Charakter). Nochmal auf den Angreifer tippt ab.</p>' : Game.attachMode ? '<p class="hint">Tippe deinen Leader oder Charakter, um 1 DON!! zu geben (+1000).</p>' : '<p class="hint">Tippe eine Handkarte zum Ausspielen, oder einen aktiven Charakter/Leader zum Angreifen.</p>'}` : ''}
+        </div>${sel != null ? '<p class="hint">Angreifer gewählt – tippe ein grün umrandetes Ziel. Zum Abwählen den Angreifer erneut tippen.</p>' : '<p class="hint">Tippe eine Karte, um sie groß zu sehen – dort kannst du ausspielen, DON!! geben/zurücknehmen oder angreifen.</p>'}` : ''}
       </div>
 
       <div class="side me">
@@ -1030,6 +1031,7 @@ function renderBoard() {
       </div>
     </div>
     ${defending ? defenseOverlay() : ''}
+    ${Game.preview != null ? previewOverlay() : ''}
     ${over ? `<div class="row" style="margin-top:10px"><button class="btn primary" data-act="g-restart">Nochmal</button><button class="btn" data-act="g-exit">Beenden</button></div>` : ''}`;
   const lg = $('#glog'); if (lg) lg.scrollTop = lg.scrollHeight;
 }
@@ -1037,8 +1039,8 @@ function renderBoard() {
 function gHandCard(p, c, myTurn) {
   const cost = OPGame._pint(c.card.cost);
   const playable = myTurn && cost <= p.donAvail && !(c.card.t === 'Character' && p.chars.length >= 5);
-  return `<button class="ghand${playable ? '' : ' dim'}" ${playable ? 'data-act="g-hand"' : ''} data-uid="${c.uid}">
-    ${art(c)}
+  return `<button class="ghand${playable ? '' : ' dim'}" data-act="g-view" data-uid="${c.uid}" data-side="hand">
+    ${art(c.card)}
     <span class="gcost">${cost}</span>
     <span class="gname">${esc(c.card.name)}</span>
     ${OPGame.counterVal(c.card) ? `<span class="gctr">+${OPGame.counterVal(c.card)}</span>` : ''}
@@ -1051,7 +1053,7 @@ function renderMulligan() {
     <div class="center" style="gap:12px">
       <div class="phase">Starthand</div>
       <p class="hint">Behalte deine Hand oder ziehe einmal komplett neu.</p>
-      <div class="hand">${me.hand.map((c) => `<div class="ghand">${art(c)}<span class="gcost">${OPGame._pint(c.card.cost)}</span><span class="gname">${esc(c.card.name)}</span></div>`).join('')}</div>
+      <div class="hand">${me.hand.map((c) => `<div class="ghand">${art(c.card)}<span class="gcost">${OPGame._pint(c.card.cost)}</span><span class="gname">${esc(c.card.name)}</span></div>`).join('')}</div>
       <div class="row"><button class="btn primary" data-act="g-mull-keep">Behalten</button><button class="btn" data-act="g-mull-new">Neu ziehen</button></div>
     </div>`;
 }
@@ -1078,6 +1080,63 @@ function defenseOverlay() {
   </div>`;
 }
 
+// Karte im Spiel finden (Hand, Charaktere, Leader beider Seiten)
+function findUnit(uid) {
+  const m = Game.match; if (!m) return null;
+  const me = m.players[0], cpu = m.players[1];
+  if (me.leader.uid === uid) return { inst: me.leader, owner: 'me', where: 'leader' };
+  if (cpu.leader.uid === uid) return { inst: cpu.leader, owner: 'cpu', where: 'leader' };
+  let c = me.chars.find((x) => x.uid === uid); if (c) return { inst: c, owner: 'me', where: 'char' };
+  c = cpu.chars.find((x) => x.uid === uid); if (c) return { inst: c, owner: 'cpu', where: 'char' };
+  c = me.hand.find((x) => x.uid === uid); if (c) return { inst: c, owner: 'me', where: 'hand' };
+  return null;
+}
+
+// Große Kartenansicht mit Effekttext und passenden Aktionen
+function previewOverlay() {
+  const m = Game.match; const uid = Game.preview;
+  const f = findUnit(uid); if (!f) { Game.preview = null; return ''; }
+  const c = f.inst, card = c.card, mine = f.owner === 'me';
+  const myTurn = m.active === 0 && !m.pending && m.phase === 'main';
+  const p = m.players[mine ? 0 : 1];
+  const pw = f.where === 'hand' ? OPGame._pint(card.pow) : m.power(p, c);
+  const cost = OPGame._pint(card.cost);
+  const canPlay = mine && f.where === 'hand' && myTurn && cost <= p.donAvail && !(card.t === 'Character' && p.chars.length >= 5);
+  const canAtk = mine && f.where !== 'hand' && myTurn && m.canAttack(p, c);
+  const canDonAdd = mine && f.where !== 'hand' && myTurn && p.donAvail > 0;
+  const canDonSub = mine && f.where !== 'hand' && myTurn && c.don > 0;
+  const isSel = Game.selAttacker === uid;
+  const hasActivate = mine && f.where !== 'hand' && /\[Activate/i.test(card.txt || '');
+  return `<div class="preview" data-act="g-pv-close">
+    <div class="pvcard" data-act="g-pv-noop">
+      <div class="pvimg">${art(card, true)}</div>
+      <div class="pvinfo">
+        <h2>${esc(card.name)}</h2>
+        <p class="sub">${esc(card.n)} · ${esc(card.r || '')} · ${esc(card.t)}${card.v ? ` · ${esc(card.v)}` : ''}</p>
+        <div class="pvstats">
+          ${cost ? `<span>Kosten ${cost}</span>` : ''}
+          ${card.pow != null ? `<span>Power ${pw}${c.don ? ` (+${c.don * 1000})` : ''}</span>` : ''}
+          ${OPGame.counterVal(card) ? `<span>Konter +${OPGame.counterVal(card)}</span>` : ''}
+          ${card.life != null ? `<span>Leben ${card.life}</span>` : ''}
+          ${card.attr ? `<span>${esc(card.attr)}</span>` : ''}
+          ${card.sub ? `<span>${esc(card.sub)}</span>` : ''}
+        </div>
+        ${card.txt ? `<p class="pvtext">${esc(card.txt)}</p>` : '<p class="pvtext muted">Diese Karte hat keinen Effekttext.</p>'}
+        <div class="pvactions">
+          ${canPlay ? `<button class="btn primary" data-act="g-pv-play" data-uid="${uid}">Ausspielen</button>` : ''}
+          ${canAtk ? `<button class="btn primary" data-act="g-pv-attack" data-uid="${uid}">Angreifen</button>` : ''}
+          ${isSel ? `<button class="btn" data-act="g-pv-deselect">Auswahl aufheben</button>` : ''}
+          ${canDonAdd ? `<button class="btn small" data-act="g-pv-don-add" data-uid="${uid}">DON!! +1</button>` : ''}
+          ${canDonSub ? `<button class="btn small" data-act="g-pv-don-sub" data-uid="${uid}">DON!! −1</button>` : ''}
+          ${hasActivate ? `<button class="btn small" ${m.canActivate(uid) ? `data-act="g-pv-effect" data-uid="${uid}"` : 'disabled'}>Effekt</button>` : ''}
+          <button class="btn small" data-act="g-pv-close">Schließen</button>
+        </div>
+        ${hasActivate && !m.canActivate(uid) ? '<p class="hint">Diesen Effekt kann ich nach deiner Deckliste einbauen – aktuell wirkt er noch nicht.</p>' : ''}
+      </div>
+    </div>
+  </div>`;
+}
+
 // Klick-Steuerung für den Spielbereich
 function gameClick(el) {
   const m = Game.match;
@@ -1089,25 +1148,31 @@ function gameClick(el) {
   if (!m) return true;
   if (act === 'g-mull-keep') { m.doMulligan(true); return true; }
   if (act === 'g-mull-new') { m.doMulligan(false); return true; }
-  if (act === 'g-attach-mode') { Game.attachMode = !Game.attachMode; Game.selAttacker = null; renderBoard(); return true; }
-  if (act === 'g-endturn') { Game.selAttacker = null; Game.attachMode = false; m.playerEndTurn(); return true; }
-  if (act === 'g-hand') { m.playerPlay(+el.dataset.uid); return true; }
-  if (act === 'g-unit') {
+  if (act === 'g-endturn') { Game.selAttacker = null; Game.preview = null; m.playerEndTurn(); return true; }
+  if (act === 'g-view') {
     const uid = +el.dataset.uid;
-    if (Game.attachMode) { m.playerAttach(uid, 1); return true; }
-    Game.selAttacker = (Game.selAttacker === uid) ? null : uid; renderBoard(); return true;
+    if (Game.selAttacker === uid) { Game.selAttacker = null; renderBoard(); return true; } // Angreifer abwählen
+    Game.preview = uid; renderBoard(); return true;
   }
   if (act === 'g-target') {
-    if (Game.selAttacker == null) return true;
+    if (Game.selAttacker == null) { Game.preview = +el.dataset.uid; renderBoard(); return true; }
     const target = el.dataset.target === 'leader' ? 'leader' : +el.dataset.uid;
     const a = Game.selAttacker; Game.selAttacker = null;
     m.playerAttack(a, target); return true;
   }
+  if (act === 'g-pv-noop') { return true; }
+  if (act === 'g-pv-close') { Game.preview = null; renderBoard(); return true; }
+  if (act === 'g-pv-play') { Game.preview = null; m.playerPlay(+el.dataset.uid); return true; }
+  if (act === 'g-pv-attack') { Game.selAttacker = +el.dataset.uid; Game.preview = null; renderBoard(); return true; }
+  if (act === 'g-pv-deselect') { Game.selAttacker = null; Game.preview = null; renderBoard(); return true; }
+  if (act === 'g-pv-don-add') { m.playerAttach(+el.dataset.uid, 1); return true; }
+  if (act === 'g-pv-don-sub') { m.playerUnattach(+el.dataset.uid); return true; }
+  if (act === 'g-pv-effect') { m.activate(+el.dataset.uid); return true; }
   if (act === 'g-def-block') { Game.def.blocker = (Game.def.blocker === +el.dataset.uid) ? null : +el.dataset.uid; renderBoard(); return true; }
   if (act === 'g-def-counter') { const u = +el.dataset.uid; const i = Game.def.counters.indexOf(u); if (i < 0) Game.def.counters.push(u); else Game.def.counters.splice(i, 1); renderBoard(); return true; }
   if (act === 'g-def-confirm') { const d = Game.def; Game.def = { blocker: null, counters: [] }; m.resolveDefense({ blockerUid: d.blocker, counterUids: d.counters }); return true; }
-  if (act === 'g-restart') { startMatch(); return true; }
-  if (act === 'g-exit') { Game.match = null; location.hash = 'decks'; return true; }
+  if (act === 'g-restart') { Game.preview = null; startMatch(); return true; }
+  if (act === 'g-exit') { Game.match = null; Game.preview = null; location.hash = 'decks'; return true; }
   return true;
 }
 

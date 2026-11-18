@@ -335,7 +335,18 @@ const OPGame = (function () {
       mulligan(players[1], players[1].hand.filter((c) => pint(c.card.cost) <= 2).length >= 2); m.pending = null; beginTurn(m.first); };
     m.playerPlay = (uid) => { if (m.active === m.HUMAN && !m.pending) { if (playFromHand(m.HUMAN, uid)) m.onUpdate(); } };
     m.playerAttach = (uid, n) => { if (m.active === m.HUMAN && !m.pending) { if (attachDon(m.HUMAN, uid, n)) m.onUpdate(); } };
+    // DON!! wieder zurücknehmen (Übungshilfe gegen Vertipper; im echten Spiel nicht möglich)
+    m.playerUnattach = (uid) => {
+      if (m.active !== m.HUMAN || m.pending) return;
+      const p = players[m.HUMAN];
+      const t = uid === p.leader.uid ? p.leader : p.chars.find((c) => c.uid === uid);
+      if (!t || t.don <= 0) return;
+      t.don -= 1; p.donAvail += 1; m.onUpdate();
+    };
     m.playerAttack = (aUid, target) => { if (m.active === m.HUMAN && !m.pending) startAttack(m.HUMAN, aUid, target); };
+    // Aktivierbarer Effekt (z. B. [Activate: Main]). Noch keine Karte umgesetzt -> false.
+    m.canActivate = (uid) => false;
+    m.activate = (uid) => false;
     m.playerEndTurn = () => { if (m.active === m.HUMAN && !m.pending) endTurn(); };
     m.resolveDefense = resolveHumanDefense;
     m.availableBlockers = () => (m.pending && m.pending.type === 'defense') ? availableBlockers(players[0], m.pending.battle) : [];
