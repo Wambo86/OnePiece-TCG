@@ -18,6 +18,23 @@ const OPGame = (function () {
   const isBanish = (c) => kw(c, /\[Banish\]/);
   const counterVal = (c) => pint(c.cnt);
 
+  // Erkennt unbedingte [DON!! xN]-Power-Boni im Kartentext. Bedingte ("If you have ...") werden bewusst ausgelassen.
+  const _donBuffCache = new Map();
+  function donBuffs(card) {
+    const key = card.n + '|' + (card.k || '');
+    if (_donBuffCache.has(key)) return _donBuffCache.get(key);
+    const txt = (card.txt || '').replace(/\s+/g, ' ');
+    const buffs = [];
+    const re = /\[DON!!\s*x(\d+)\]\s*\[(Your Turn|Opponent's Turn|When Attacking)\]\s*(This (?:Leader|Character)|All of your Characters) gains?\s*\+(\d+)\s*power/gi;
+    let mm;
+    while ((mm = re.exec(txt))) {
+      const when = /Your Turn/i.test(mm[2]) ? 'yourturn' : /Opponent/i.test(mm[2]) ? 'oppturn' : 'attacking';
+      buffs.push({ n: +mm[1], when, scope: /All of your/i.test(mm[3]) ? 'team' : 'self', amount: +mm[4] });
+    }
+    _donBuffCache.set(key, buffs);
+    return buffs;
+  }
+
   let UID = 1;
   const inst = (card) => ({ uid: UID++, k: card.k, card, rested: false, don: 0, summonedTurn: -1 });
 
@@ -114,7 +131,18 @@ const OPGame = (function () {
 
     // ---- Kampfwerte ----
     function power(p, c, ctx) {
+      const attacking = !!(ctx && ctx.attacking);
       let v = pint(c.card.pow) + c.don * 1000 + (ctx && ctx.buff ? ctx.buff : 0);
+      const mine = (m.active === p.idx);
+      const applies = (when) => (when === 'attacking' ? attacking : when === 'oppturn' ? !mine : mine);
+      // [DON!! xN]-Selbstboni dieser Karte (z. B. "[DON!! x1] [Your Turn] This Character gains +1000 power")
+      for (const bf of donBuffs(c.card)) if (bf.scope === 'self' && c.don >= bf.n && applies(bf.when)) v += bf.amount;
+      // Teamboni ("All of your Characters gain +X power") von Leader/eigenen Charakteren – nur auf Charaktere
+      if (c.card.t === 'Character') {
+        for (const src of [p.leader, ...p.chars]) {
+          for (const bf of donBuffs(src.card)) if (bf.scope === 'team' && bf.when !== 'attacking' && src.don >= bf.n && applies(bf.when)) v += bf.amount;
+        }
+      }
       return v;
     }
     const canAttack = (p, c) => !c.rested && (c === p.leader || c.summonedTurn !== m.turn || isRush(c.card));
@@ -203,7 +231,7 @@ const OPGame = (function () {
     function resolveBattle(battle) {
       const atk = players[battle.atkIdx], def = players[other(battle.atkIdx)];
       const a = battle.aUid === atk.leader.uid ? atk.leader : atk.chars.find((c) => c.uid === battle.aUid);
-      const ap = a ? power(atk, a) : 0;
+      const ap = a ? power(atk, a, { attacking: true }) : 0;
       let tp, target;
       if (battle.targetIsLeader) { target = def.leader; tp = power(def, def.leader) + battle.defBuff; }
       else { target = def.chars.find((c) => c.uid === battle.targetUid); tp = target ? power(def, target) + battle.defBuff : 0; }
@@ -242,7 +270,7 @@ const OPGame = (function () {
     function cpuDefend(battle) {
       const def = players[other(battle.atkIdx)], atk = players[battle.atkIdx];
       const a = battle.aUid === atk.leader.uid ? atk.leader : atk.chars.find((c) => c.uid === battle.aUid);
-      const ap = a ? power(atk, a) : 0;
+      const ap = a ? power(atk, a, { attacking: true }) : 0;
       // Blocken, wenn Leader angegriffen wird und wir einen Blocker haben, der nicht sofort stirbt (oder zum Schutz von Leben)
       if (battle.targetIsLeader && def.life.length <= 1) {
         const blockers = def.chars.filter((c) => !c.rested && isBlocker(c.card));
@@ -382,7 +410,7 @@ const OPGame = (function () {
     ].filter((d) => d.leader);
   }
 
-  return { createMatch, cpuDecks, buildDeck, hasEffect, isBlocker, isRush, counterVal, EFFECT_MAP, SPECIAL, _pint: pint };
+  return { createMatch, cpuDecks, buildDeck, hasEffect, isBlocker, isRush, counterVal, donBuffs, EFFECT_MAP, SPECIAL, _pint: pint };
 })();
 
 if (typeof module !== 'undefined' && module.exports) module.exports = OPGame;
