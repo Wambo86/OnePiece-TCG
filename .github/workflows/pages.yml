@@ -30,10 +30,12 @@ jobs:
       - name: Karten und Cardmarket-Preise holen
         # Die Daten liegen nicht im Repository. Schlägt der Abruf fehl, bricht der Lauf ab und die zuletzt veröffentlichte Seite bleibt online.
         run: node scripts/build-data.mjs
+      - name: Pokémon-Karten und Cardmarket-Preise holen
+        run: node scripts/build-pokemon-data.mjs
       - name: Seite zusammenstellen
         run: |
           mkdir _site
-          cp -r index.html app.js game.js styles.css sw.js manifest.webmanifest icons vendor data _site/
+          cp -r index.html app.js game.js styles.css sw.js manifest.webmanifest icons vendor data pokemon _site/
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
